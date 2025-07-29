@@ -1,2 +1,8 @@
-python-telegram-bot>=20.0
-python-dotenv>=1.0
+python-telegram-bot==20.8
+fastapi
+uvicorn[standard]
+python-dotenv
+
+
+
+
