@@ -1,144 +1,101 @@
 import os
 import logging
 from dotenv import load_dotenv
-from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
+from fastapi import FastAPI
+from telegram import (
+    Update,
+    InlineKeyboardButton,
+    InlineKeyboardMarkup,
+)
 from telegram.ext import (
-    ApplicationBuilder,
-    ContextTypes,
+    Application,
     CommandHandler,
-    CallbackQueryHandler,
-    MessageHandler,
-    filters,
+    ContextTypes,
 )
+from telegram.ext.fastapi import create_application
 
+# Load environment variables
 load_dotenv()
-
 BOT_TOKEN = os.getenv("BOT_TOKEN")
-WEBHOOK_BASE_URL = os.getenv("WEBHOOK_URL")  # e.g. https://yourrenderapp.onrender.com
+WEBHOOK_URL = os.getenv("WEBHOOK_URL")
 
+# Enable logging
 logging.basicConfig(
-    format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
-    level=logging.INFO,
+    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
+    level=logging.INFO
 )
-logger = logging.getLogger(__name__)
 
-LINKS = {
-    "Instagram": "https://instagram.com/xeyronox",
-    "GitHub (Some tools are free!)": "https://github.com/Xeyronox",
-    "Telegram (Personal)": "https://t.me/Xeyronox",
-    "Telegram Channel": "https://t.me/Xeyronox1",
-    "YouTube": "https://www.youtube.com/@Xeyronox",
-    "🛒 Tool Shop": "https://xeyronox-shop.vercel.app",
-}
+# FastAPI instance for webhook + /healthz
+fastapi_app = FastAPI()
 
+
+# ========== Telegram Command Handlers ==========
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    welcome_text = (
-        "👋 Welcome to Xeyronox's Link Bot!\n\n"
-        "Use /links to see my official profiles and tool shop.\n"
-        "Use /help to learn more about this bot."
+    keyboard = [
+        [InlineKeyboardButton("📷 Instagram", url="https://instagram.com/xeyronox")],
+        [InlineKeyboardButton("💻 GitHub", url="https://github.com/Xeyronox")],
+        [InlineKeyboardButton("📢 Telegram Channel", url="https://t.me/Xeyronox1")],
+        [InlineKeyboardButton("👤 Telegram Profile", url="https://t.me/Xeyronox")],
+        [InlineKeyboardButton("🛒 Tool Shop", url="https://xeyronox-shop.vercel.app")],
+        [InlineKeyboardButton("📺 YouTube", url="https://www.youtube.com/@Xeyronox")],
+    ]
+    await update.message.reply_text(
+        "👋 Welcome to *Xeyronox Link Bot!*\n\nHere are my official links 👇",
+        reply_markup=InlineKeyboardMarkup(keyboard),
+        parse_mode="Markdown"
     )
-    await update.message.reply_text(welcome_text)
 
 
 async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    help_text = (
-        "🆘 Help Menu\n\n"
-        "/start – Welcome message\n"
-        "/links – Get my official account and shop links\n"
-        "/shop – View tool shop\n"
-        "/portfolio – View upcoming portfolio\n"
-        "/language – Choose language (English only currently)\n"
-        "/help – Show this help message\n\n"
-        "💡 Note: Some tools are available for free on my GitHub!"
+    text = (
+        "ℹ️ *Available Commands:*\n\n"
+        "/start - Show official links\n"
+        "/help - Show this help message\n"
+        "/shop - Visit hacking tools shop\n"
+        "/portfolio - View portfolio (coming soon)\n\n"
+        "💡 Some tools are available free at our [GitHub](https://github.com/Xeyronox)."
     )
-    await update.message.reply_text(help_text)
+    await update.message.reply_markdown(text)
 
 
-async def links(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    keyboard = [[InlineKeyboardButton(name, url=url)] for name, url in LINKS.items()]
-    reply_markup = InlineKeyboardMarkup(keyboard)
-    await update.message.reply_text("🔗 Click a link below:", reply_markup=reply_markup)
+async def shop(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    keyboard = [[InlineKeyboardButton("🛍️ Open Tool Shop", url="https://xeyronox-shop.vercel.app")]]
+    await update.message.reply_text("🧰 Check out my hacking tools:", reply_markup=InlineKeyboardMarkup(keyboard))
 
 
-async def shop_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    keyboard = [[InlineKeyboardButton("🛒 Visit Tool Shop", url=LINKS["🛒 Tool Shop"])]]
-    reply_markup = InlineKeyboardMarkup(keyboard)
-    await update.message.reply_text("Here’s the shop for hacking tools:", reply_markup=reply_markup)
+async def portfolio(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    keyboard = [[InlineKeyboardButton("🔧 Portfolio coming soon!", callback_data="coming_soon")]]
+    await update.message.reply_text("🚧 Portfolio is under construction.", reply_markup=InlineKeyboardMarkup(keyboard))
 
 
-async def portfolio_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    keyboard = [[InlineKeyboardButton("📁 Coming Soon", callback_data="coming_soon")]]
-    reply_markup = InlineKeyboardMarkup(keyboard)
-    await update.message.reply_text("My portfolio will be live soon:", reply_markup=reply_markup)
+# ========== FastAPI Health Check Endpoint ==========
+
+@fastapi_app.get("/healthz")
+async def health_check():
+    return {"status": "ok"}
 
 
-async def language_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    keyboard = [[InlineKeyboardButton("🇺🇸 English (Only language supported)", callback_data="lang_en")]]
-    reply_markup = InlineKeyboardMarkup(keyboard)
-    await update.message.reply_text("🌐 Please select your language:", reply_markup=reply_markup)
-
-
-async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    query = update.callback_query
-    await query.answer()
-    if query.data == "coming_soon":
-        await query.answer("This feature is coming soon! Stay tuned.", show_alert=True)
-    elif query.data == "lang_en":
-        await query.edit_message_text("Language set to English. (Only English supported currently)")
-
-
-async def unknown_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    await update.message.reply_text("❓ Unknown command. Try /help for a list of commands.")
-
-
-async def error_handler(update: object, context: ContextTypes.DEFAULT_TYPE):
-    logger.error("Exception while handling an update:", exc_info=context.error)
-
+# ========== Main Async Entrypoint ==========
 
 async def main():
-    if not BOT_TOKEN:
-        raise RuntimeError("BOT_TOKEN is required in .env")
+    application = Application.builder().token(BOT_TOKEN).build()
 
-    app = ApplicationBuilder().token(BOT_TOKEN).build()
+    # Add command handlers
+    application.add_handler(CommandHandler("start", start))
+    application.add_handler(CommandHandler("help", help_command))
+    application.add_handler(CommandHandler("shop", shop))
+    application.add_handler(CommandHandler("portfolio", portfolio))
 
-    # Register handlers
-    app.add_handler(CommandHandler("start", start))
-    app.add_handler(CommandHandler("help", help_command))
-    app.add_handler(CommandHandler("links", links))
-    app.add_handler(CommandHandler("shop", shop_command))
-    app.add_handler(CommandHandler("portfolio", portfolio_command))
-    app.add_handler(CommandHandler("language", language_command))
-    app.add_handler(CallbackQueryHandler(button_handler))
-    app.add_handler(MessageHandler(filters.COMMAND, unknown_command))
-    app.add_error_handler(error_handler)
+    # Set Telegram webhook
+    await application.bot.set_webhook(url=WEBHOOK_URL)
 
-    # Fetch bot username from Telegram
-    bot_user = await app.bot.get_me()
-    bot_username = bot_user.username
-    logger.info(f"Bot username detected: @{bot_username}")
-
-    if WEBHOOK_BASE_URL:
-        webhook_path = f"/{bot_username}"
-        webhook_url = WEBHOOK_BASE_URL.rstrip("/") + webhook_path
-
-        logger.info(f"Starting webhook with URL: {webhook_url}")
-
-        # PORT for render or default 8443
-        port = int(os.environ.get("PORT", 8443))
-
-        await app.run_webhook(
-            listen="0.0.0.0",
-            port=port,
-            url_path=bot_username,
-            webhook_url=webhook_url,
-        )
-    else:
-        logger.info("No WEBHOOK_URL found, running in polling mode.")
-        await app.run_polling()
+    # Mount FastAPI app for Telegram webhook
+    telegram_app = create_application(application)
+    fastapi_app.mount("/", telegram_app)
 
 
+# Run
 if __name__ == "__main__":
     import asyncio
-
     asyncio.run(main())
