@@ -2,12 +2,12 @@ services:
   - type: web
     name: xeyronox-link-bot
     env: python
+    region: oregon
+    plan: free
     buildCommand: pip install -r requirements.txt
     startCommand: python bot.py
     envVars:
       - key: BOT_TOKEN
-        sync: false         # Set securely via Render dashboard
+        sync: false
       - key: WEBHOOK_URL
-        value: https://xeyronox-link-bot.onrender.com/XeyronoxLinkBot
-    autoDeploy: true
-    plan: free
+        sync: false
