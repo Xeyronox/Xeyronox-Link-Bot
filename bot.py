@@ -1,36 +1,30 @@
 import os
 import logging
 from dotenv import load_dotenv
-from fastapi import FastAPI
-from telegram import (
-    Update,
-    InlineKeyboardButton,
-    InlineKeyboardMarkup,
-)
+from fastapi import FastAPI, Request
+from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import (
     Application,
     CommandHandler,
     ContextTypes,
 )
-from telegram.ext.fastapi import create_application
 
 # Load environment variables
 load_dotenv()
 BOT_TOKEN = os.getenv("BOT_TOKEN")
 WEBHOOK_URL = os.getenv("WEBHOOK_URL")
 
-# Enable logging
-logging.basicConfig(
-    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
-    level=logging.INFO
-)
+# Logging
+logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger(__name__)
 
-# FastAPI instance for webhook + /healthz
-fastapi_app = FastAPI()
+# Initialize FastAPI
+app = FastAPI()
 
+# Initialize Telegram bot
+application = Application.builder().token(BOT_TOKEN).build()
 
-# ========== Telegram Command Handlers ==========
-
+# Command Handlers
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     keyboard = [
         [InlineKeyboardButton("📷 Instagram", url="https://instagram.com/xeyronox")],
@@ -46,7 +40,6 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
         parse_mode="Markdown"
     )
 
-
 async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     text = (
         "ℹ️ *Available Commands:*\n\n"
@@ -58,44 +51,35 @@ async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     )
     await update.message.reply_markdown(text)
 
-
 async def shop(update: Update, context: ContextTypes.DEFAULT_TYPE):
     keyboard = [[InlineKeyboardButton("🛍️ Open Tool Shop", url="https://xeyronox-shop.vercel.app")]]
     await update.message.reply_text("🧰 Check out my hacking tools:", reply_markup=InlineKeyboardMarkup(keyboard))
-
 
 async def portfolio(update: Update, context: ContextTypes.DEFAULT_TYPE):
     keyboard = [[InlineKeyboardButton("🔧 Portfolio coming soon!", callback_data="coming_soon")]]
     await update.message.reply_text("🚧 Portfolio is under construction.", reply_markup=InlineKeyboardMarkup(keyboard))
 
-
-# ========== FastAPI Health Check Endpoint ==========
-
-@fastapi_app.get("/healthz")
-async def health_check():
+# Health check route (for Render)
+@app.get("/healthz")
+async def healthz():
     return {"status": "ok"}
 
+# Telegram Webhook Route
+@app.post("/XeyronoxLinkBot")
+async def telegram_webhook(req: Request):
+    data = await req.json()
+    update = Update.de_json(data, application.bot)
+    await application.process_update(update)
+    return {"ok": True}
 
-# ========== Main Async Entrypoint ==========
-
-async def main():
-    application = Application.builder().token(BOT_TOKEN).build()
-
-    # Add command handlers
+# Main setup
+async def setup():
     application.add_handler(CommandHandler("start", start))
     application.add_handler(CommandHandler("help", help_command))
     application.add_handler(CommandHandler("shop", shop))
     application.add_handler(CommandHandler("portfolio", portfolio))
 
-    # Set Telegram webhook
-    await application.bot.set_webhook(url=WEBHOOK_URL)
+    await application.bot.set_webhook(WEBHOOK_URL)
 
-    # Mount FastAPI app for Telegram webhook
-    telegram_app = create_application(application)
-    fastapi_app.mount("/", telegram_app)
-
-
-# Run
-if __name__ == "__main__":
-    import asyncio
-    asyncio.run(main())
+import asyncio
+asyncio.run(setup())
