@@ -13,4 +13,10 @@ services:
         sync: false
       - key: PORT
         value: 10000
+      - key: DEBUG
+        value: false
+      - key: ENVIRONMENT
+        value: production
     healthCheckPath: /healthz
+    autoDeploy: true
+    numInstances: 1
