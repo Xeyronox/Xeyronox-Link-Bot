@@ -1,8 +1,9 @@
 import os
 import logging
 import sys
+import time
 from datetime import datetime
-from typing import Optional, Any
+from typing import Optional, Dict, Any
 from dotenv import load_dotenv
 from fastapi import FastAPI, Request, status
 from fastapi.responses import JSONResponse
@@ -13,38 +14,52 @@ from telegram.ext import (
     CommandHandler,
     ContextTypes,
     CallbackQueryHandler,
-    AIORateLimiter,
 )
-from telegram.error import TelegramError
 import asyncio
 import uvicorn
+import json
+from pathlib import Path
 
-# Load environment variables
+# Load environment variables with fallback values
 load_dotenv()
 
-# Configuration
-BOT_TOKEN = os.getenv("BOT_TOKEN")
-WEBHOOK_URL = os.getenv("WEBHOOK_URL")
-PORT = int(os.getenv("PORT", "10000"))
-DEBUG = os.getenv("DEBUG", "False").lower() == "true"
-ENVIRONMENT = os.getenv("ENVIRONMENT", "production")
+class Config:
+    BOT_TOKEN = os.getenv("BOT_TOKEN")
+    WEBHOOK_URL = os.getenv("WEBHOOK_URL")
+    PORT = int(os.getenv("PORT", "10000"))
+    DEBUG = os.getenv("DEBUG", "False").lower() == "true"
+    ENVIRONMENT = os.getenv("ENVIRONMENT", "production")
+    RETRY_ATTEMPTS = int(os.getenv("RETRY_ATTEMPTS", "3"))
+    LOG_LEVEL = os.getenv("LOG_LEVEL", "INFO")
+    
+    @classmethod
+    def validate(cls):
+        if not cls.BOT_TOKEN or not cls.WEBHOOK_URL:
+            raise ValueError("BOT_TOKEN and WEBHOOK_URL must be set in .env file")
 
-if not BOT_TOKEN or not WEBHOOK_URL:
-    raise ValueError("BOT_TOKEN and WEBHOOK_URL must be set in .env file")
+# Validate configuration
+Config.validate()
 
-# Enhanced Logging Configuration
+# Setup logging with rotation
+log_file = Path("logs/bot.log")
+log_file.parent.mkdir(exist_ok=True)
+
 logging.basicConfig(
     format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
-    level=logging.DEBUG if DEBUG else logging.INFO,
+    level=getattr(logging, Config.LOG_LEVEL),
     handlers=[
         logging.StreamHandler(sys.stdout),
-        logging.FileHandler("bot.log")
+        logging.FileHandler(log_file)
     ]
 )
 logger = logging.getLogger(__name__)
 
-# Initialize FastAPI with CORS and error handling
-app = FastAPI(title="Xeyronox Link Bot", version="2.0.0")
+# Initialize FastAPI with enhanced error handling
+app = FastAPI(
+    title="Xeyronox Link Bot",
+    version="2.1.0",
+    docs_url="/docs" if Config.DEBUG else None
+)
 
 app.add_middleware(
     CORSMiddleware,
@@ -54,7 +69,20 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# Error Handler
+# Enhanced error handling
+class BotError(Exception):
+    def __init__(self, message: str, status_code: int = 500):
+        self.message = message
+        self.status_code = status_code
+        super().__init__(self.message)
+
+@app.exception_handler(BotError)
+async def bot_exception_handler(request: Request, exc: BotError):
+    return JSONResponse(
+        status_code=exc.status_code,
+        content={"message": exc.message}
+    )
+
 @app.exception_handler(Exception)
 async def global_exception_handler(request: Request, exc: Exception):
     logger.error(f"Global error occurred: {exc}", exc_info=True)
@@ -63,167 +91,134 @@ async def global_exception_handler(request: Request, exc: Exception):
         content={"message": "Internal server error", "detail": str(exc)}
     )
 
-# Initialize Telegram bot with rate limiting
-application = (
-    Application.builder()
-    .token(BOT_TOKEN)
-    .rate_limiter(AIORateLimiter(max_retries=3))
-    .build()
-)
+# Initialize bot with retry mechanism
+class RetryableApplication:
+    def __init__(self, token: str, max_retries: int = 3):
+        self.token = token
+        self.max_retries = max_retries
+        self.application = None
 
-# Utility function for error handling
-async def error_handler(update: Optional[Update], context: ContextTypes.DEFAULT_TYPE) -> None:
-    logger.error("Exception while handling an update:", exc_info=context.error)
-    error_message = "An error occurred while processing your request. Please try again later."
+    async def initialize(self):
+        for attempt in range(self.max_retries):
+            try:
+                self.application = Application.builder().token(self.token).build()
+                return self.application
+            except Exception as e:
+                if attempt == self.max_retries - 1:
+                    raise BotError(f"Failed to initialize bot after {self.max_retries} attempts: {e}")
+                await asyncio.sleep(2 ** attempt)  # Exponential backoff
+
+bot_app = RetryableApplication(Config.BOT_TOKEN, Config.RETRY_ATTEMPTS)
+
+# Command handlers with automatic retry
+async def with_retry(func, *args, **kwargs):
+    for attempt in range(Config.RETRY_ATTEMPTS):
+        try:
+            return await func(*args, **kwargs)
+        except Exception as e:
+            if attempt == Config.RETRY_ATTEMPTS - 1:
+                raise
+            logger.warning(f"Retry attempt {attempt + 1} for {func.__name__}: {e}")
+            await asyncio.sleep(1)
+
+async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    keyboard = [
+        [InlineKeyboardButton("📷 Instagram", url="https://instagram.com/xeyronox")],
+        [InlineKeyboardButton("💻 GitHub", url="https://github.com/Xeyronox")],
+        [InlineKeyboardButton("📢 Channel", url="https://t.me/Xeyronox1")],
+        [InlineKeyboardButton("👤 Profile", url="https://t.me/Xeyronox")],
+        [InlineKeyboardButton("🛒 Shop", url="https://xeyronox-shop.vercel.app")],
+        [InlineKeyboardButton("📺 YouTube", url="https://www.youtube.com/@Xeyronox")],
+    ]
+    await with_retry(
+        update.message.reply_text,
+        "👋 Welcome to *Xeyronox Link Bot!*\n\nHere are my official links 👇",
+        reply_markup=InlineKeyboardMarkup(keyboard),
+        parse_mode="Markdown"
+    )
+
+async def status_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    status_info = {
+        "time_utc": datetime.utcnow().strftime("%Y-%m-%d %H:%M:%S"),
+        "environment": Config.ENVIRONMENT,
+        "uptime": time.time() - bot_start_time,
+        "version": "2.1.0"
+    }
     
-    if update and update.effective_message:
-        await update.effective_message.reply_text(error_message)
+    status_text = (
+        f"🤖 *Bot Status*\n\n"
+        f"🕒 UTC: {status_info['time_utc']}\n"
+        f"⚙️ Env: {status_info['environment']}\n"
+        f"⏱️ Uptime: {int(status_info['uptime'])}s\n"
+        f"📦 Version: {status_info['version']}"
+    )
+    
+    await with_retry(
+        update.message.reply_text,
+        status_text,
+        parse_mode="Markdown"
+    )
 
-# Command Handlers with error handling
-async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    try:
-        keyboard = [
-            [InlineKeyboardButton("📷 Instagram", url="https://instagram.com/xeyronox")],
-            [InlineKeyboardButton("💻 GitHub", url="https://github.com/Xeyronox")],
-            [InlineKeyboardButton("📢 Telegram Channel", url="https://t.me/Xeyronox1")],
-            [InlineKeyboardButton("👤 Telegram Profile", url="https://t.me/Xeyronox")],
-            [InlineKeyboardButton("🛒 Tool Shop", url="https://xeyronox-shop.vercel.app")],
-            [InlineKeyboardButton("📺 YouTube", url="https://www.youtube.com/@Xeyronox")],
-        ]
-        await update.message.reply_text(
-            "👋 Welcome to *Xeyronox Link Bot!*\n\nHere are my official links 👇",
-            reply_markup=InlineKeyboardMarkup(keyboard),
-            parse_mode="Markdown"
-        )
-    except Exception as e:
-        logger.error(f"Error in start command: {e}", exc_info=True)
-        await error_handler(update, context)
-
-async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    try:
-        text = (
-            "ℹ️ *Available Commands:*\n\n"
-            "/start - Show official links\n"
-            "/help - Show this help message\n"
-            "/shop - Visit hacking tools shop\n"
-            "/portfolio - View portfolio\n"
-            "/status - Check bot status\n\n"
-            "💡 Some tools are available free at our [GitHub](https://github.com/Xeyronox)."
-        )
-        await update.message.reply_markdown(text)
-    except Exception as e:
-        logger.error(f"Error in help command: {e}", exc_info=True)
-        await error_handler(update, context)
-
-async def shop(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    try:
-        keyboard = [[InlineKeyboardButton("🛍️ Open Tool Shop", url="https://xeyronox-shop.vercel.app")]]
-        await update.message.reply_text(
-            "🧰 Check out my hacking tools:",
-            reply_markup=InlineKeyboardMarkup(keyboard)
-        )
-    except Exception as e:
-        logger.error(f"Error in shop command: {e}", exc_info=True)
-        await error_handler(update, context)
-
-async def portfolio(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    try:
-        keyboard = [[InlineKeyboardButton("🔧 View Portfolio", url="https://xeyronox.com")]]
-        await update.message.reply_text(
-            "📂 Check out my portfolio!",
-            reply_markup=InlineKeyboardMarkup(keyboard)
-        )
-    except Exception as e:
-        logger.error(f"Error in portfolio command: {e}", exc_info=True)
-        await error_handler(update, context)
-
-async def status(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    try:
-        status_text = (
-            "🤖 *Bot Status*\n\n"
-            f"🕒 Current UTC Time: {datetime.utcnow().strftime('%Y-%m-%d %H:%M:%S')}\n"
-            f"🌐 Environment: {ENVIRONMENT}\n"
-            "✅ Bot is running normally"
-        )
-        await update.message.reply_markdown(status_text)
-    except Exception as e:
-        logger.error(f"Error in status command: {e}", exc_info=True)
-        await error_handler(update, context)
-
-# Callback Query Handler
-async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    try:
-        query = update.callback_query
-        await query.answer()
-    except Exception as e:
-        logger.error(f"Error in button callback: {e}", exc_info=True)
-        await error_handler(update, context)
-
-# Health check route
+# Health check endpoint
 @app.get("/healthz")
 async def healthz():
     return {
         "status": "ok",
         "timestamp": datetime.utcnow().isoformat(),
-        "version": "2.0.0",
-        "environment": ENVIRONMENT
+        "environment": Config.ENVIRONMENT,
+        "uptime": time.time() - bot_start_time
     }
 
-# Telegram Webhook Route
-@app.post(f"/{BOT_TOKEN}")
+# Webhook handler
+@app.post(f"/{Config.BOT_TOKEN}")
 async def telegram_webhook(request: Request):
     try:
         data = await request.json()
-        update = Update.de_json(data, application.bot)
-        await application.process_update(update)
+        update = Update.de_json(data, bot_app.application.bot)
+        await bot_app.application.process_update(update)
         return {"ok": True}
     except Exception as e:
-        logger.error(f"Error processing webhook: {e}", exc_info=True)
+        logger.error(f"Webhook error: {e}", exc_info=True)
         return JSONResponse(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             content={"ok": False, "error": str(e)}
         )
 
-# Setup function
-async def setup():
-    try:
-        # Register handlers
-        application.add_handler(CommandHandler("start", start))
-        application.add_handler(CommandHandler("help", help_command))
-        application.add_handler(CommandHandler("shop", shop))
-        application.add_handler(CommandHandler("portfolio", portfolio))
-        application.add_handler(CommandHandler("status", status))
-        application.add_handler(CallbackQueryHandler(button_callback))
-        
-        # Register error handler
-        application.add_error_handler(error_handler)
-
-        # Set webhook
-        webhook_url = f"{WEBHOOK_URL}/{BOT_TOKEN}"
-        await application.bot.set_webhook(webhook_url)
-        logger.info(f"Webhook set to {webhook_url}")
-        
-        # Test bot connection
-        me = await application.bot.get_me()
-        logger.info(f"Bot started successfully. Bot username: @{me.username}")
+# Startup and shutdown events
+@app.on_event("startup")
+async def startup_event():
+    global bot_start_time
+    bot_start_time = time.time()
     
-    except Exception as e:
-        logger.critical(f"Failed to setup bot: {e}", exc_info=True)
-        sys.exit(1)
+    # Initialize bot
+    application = await bot_app.initialize()
+    
+    # Register handlers
+    application.add_handler(CommandHandler("start", start))
+    application.add_handler(CommandHandler("status", status_command))
+    
+    # Set webhook
+    webhook_url = f"{Config.WEBHOOK_URL}/{Config.BOT_TOKEN}"
+    await application.bot.set_webhook(webhook_url)
+    logger.info(f"Bot started successfully. Webhook set to {webhook_url}")
+
+@app.on_event("shutdown")
+async def shutdown_event():
+    if bot_app.application:
+        await bot_app.application.shutdown()
+    logger.info("Bot shutdown completed")
 
 # Main execution
 if __name__ == "__main__":
-    # Setup the application
-    asyncio.run(setup())
-    
-    # Run the FastAPI application
-    config = uvicorn.Config(
-        app=app,
-        host="0.0.0.0",
-        port=PORT,
-        reload=DEBUG,
-        log_level="debug" if DEBUG else "info",
-        workers=1
-    )
-    server = uvicorn.Server(config)
-    asyncio.run(server.serve())
+    try:
+        uvicorn.run(
+            "bot:app",
+            host="0.0.0.0",
+            port=Config.PORT,
+            reload=Config.DEBUG,
+            log_level="debug" if Config.DEBUG else "info",
+            workers=1
+        )
+    except Exception as e:
+        logger.critical(f"Failed to start server: {e}", exc_info=True)
+        sys.exit(1)
