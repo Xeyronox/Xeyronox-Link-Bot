@@ -19,10 +19,16 @@ services:
         value: false
       - key: ENVIRONMENT
         value: production
-      - key: RETRY_ATTEMPTS
-        value: 3
       - key: LOG_LEVEL
         value: INFO
+      - key: MAX_RETRIES
+        value: 3
+      - key: TIMEOUT
+        value: 30
+      - key: RATE_LIMIT
+        value: 100
+      - key: ALLOWED_UPDATES
+        value: '["message", "callback_query"]'
     healthCheckPath: /healthz
     autoDeploy: true
     numInstances: 1
