@@ -13,9 +13,13 @@ from telegram.ext import (
 load_dotenv()
 BOT_TOKEN = os.getenv("BOT_TOKEN")
 WEBHOOK_URL = os.getenv("WEBHOOK_URL")
+PORT = int(os.getenv("PORT", "10000"))
 
 # Logging
-logging.basicConfig(level=logging.INFO)
+logging.basicConfig(
+    format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
+    level=logging.INFO
+)
 logger = logging.getLogger(__name__)
 
 # Initialize FastAPI
@@ -65,21 +69,32 @@ async def healthz():
     return {"status": "ok"}
 
 # Telegram Webhook Route
-@app.post("/XeyronoxLinkBot")
-async def telegram_webhook(req: Request):
-    data = await req.json()
+@app.post(f"/{BOT_TOKEN}")
+async def telegram_webhook(request: Request):
+    data = await request.json()
     update = Update.de_json(data, application.bot)
     await application.process_update(update)
     return {"ok": True}
 
-# Main setup
+# Register handlers and start the bot
 async def setup():
+    # Add command handlers
     application.add_handler(CommandHandler("start", start))
     application.add_handler(CommandHandler("help", help_command))
     application.add_handler(CommandHandler("shop", shop))
     application.add_handler(CommandHandler("portfolio", portfolio))
 
-    await application.bot.set_webhook(WEBHOOK_URL)
+    # Set webhook
+    webhook_url = f"{WEBHOOK_URL}/{BOT_TOKEN}"
+    await application.bot.set_webhook(webhook_url)
+    logger.info(f"Webhook set to {webhook_url}")
 
-import asyncio
-asyncio.run(setup())
+if __name__ == "__main__":
+    import uvicorn
+    import asyncio
+    
+    # Setup the application
+    asyncio.run(setup())
+    
+    # Run the FastAPI application
+    uvicorn.run(app, host="0.0.0.0", port=PORT)
