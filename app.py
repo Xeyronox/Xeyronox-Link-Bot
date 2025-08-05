@@ -21,7 +21,7 @@ app = Flask(__name__)
 
 # Bot configuration
 TOKEN = os.environ.get('TELEGRAM_BOT_TOKEN')
-WEBHOOK_URL = os.environ.get('WEBHOOK_URL', 'https://xeyronox-link-bot.onrender.com')
+WEBHOOK_URL = os.environ.get('WEBHOOK_URL', 'https://xeyronox-link-bot-n9pl.onrender.com')
 
 # Global application variable
 telegram_app = None
@@ -300,7 +300,7 @@ def create_application():
 
 # Health check endpoint for Render
 @app.route('/health')
-def health_check():
+def health_check(): 
     """Health check endpoint for monitoring."""
     try:
         bot_status = "healthy" if telegram_app else "not_initialized"
