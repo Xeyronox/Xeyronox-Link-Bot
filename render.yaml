@@ -1,0 +1,19 @@
+# render.yaml - Render.com blueprint for Xeyronox Link Bot
+services:
+  - type: web
+    name: xeyronox-link-bot
+    env: python
+    branch: main                     # Change if using a different deploy branch
+    buildCommand: pip install -r requirements.txt
+    startCommand: gunicorn app:app
+    plan: free                       # Or "starter" for more resources
+    autoDeploy: true
+    envVars:
+      - key: TELEGRAM_BOT_TOKEN
+        sync: false                  # Set this in the Render dashboard for security
+      - key: WEBHOOK_URL
+        value: https://xeyronox-link-bot.onrender.com
+      - key: PORT
+        value: 10000
+    healthCheckPath: /health
+    
